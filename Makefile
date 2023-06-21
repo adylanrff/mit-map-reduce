@@ -32,3 +32,19 @@ LABS=" lab1 lab2a lab2b lab2c lab2d lab3a lab3b lab4a lab4b "
 check-%:
 	@echo "Checking that your submission builds correctly..."
 	@./.check-build git://g.csail.mit.edu/6.5840-golabs-2023 $(patsubst check-%,%,$@)
+
+build:
+	@cd src/main && rm -rf mr-out*
+	@cd src/main && go build -buildmode=plugin ../mrapps/wc.go
+
+run-wc-sequential:
+	@cd src/main && go run mrsequential.go wc.so pg*.txt
+
+run-wc-coordinator:
+	@cd src/main && go run mrcoordinator.go pg-*.txt
+
+run-wc-worker:
+	@cd src/main && go run mrworker.go wc.so
+
+run-test:
+	@cd src/main && bash test-mr.sh
