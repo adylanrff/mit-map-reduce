@@ -29,12 +29,23 @@ type ExampleReply struct {
 // GetTask get task
 
 type GetTaskArgs struct {
+	WorkerID string
 }
 
 type GetTaskReply struct {
 	Task    Task
 	NReduce int
 }
+
+// UpdateTaskProgressArgs update the task progress from the workerID
+type UpdateTaskProgressArgs struct {
+	WorkerID  string
+	TaskID    int
+	TaskState TaskState
+	Timestamp int64
+}
+
+type UpdateTaskProgressReply struct{}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.

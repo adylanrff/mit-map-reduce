@@ -2,11 +2,13 @@ package mr
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync"
 )
 
 type TaskType int
@@ -14,6 +16,7 @@ type TaskType int
 const (
 	TaskTypeMap = iota + 1
 	TaskTypeReduce
+	TaskTypeShutdown
 )
 
 type TaskState int
@@ -25,29 +28,58 @@ const (
 )
 
 type Task struct {
-	ID       int
-	Type     TaskType
-	State    TaskState
-	Location string
+	ID             int
+	Type           TaskType
+	State          TaskState
+	WorkerID       string
+	Location       string
+	LastUpdateTime int64
+	ReduceTaskID   int
 }
 
 type Coordinator struct {
 	NReduce int
 	tasks   []Task
+
+	sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
 
 func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
-	for _, task := range c.tasks {
-		if task.State != TaskStateFinished {
+	c.Lock()
+	defer c.Unlock()
+
+	for i, task := range c.tasks {
+		// Get the first idle task
+		if task.State == TaskStateIdle {
+			// assign the task to the worker
 			reply.Task = task
 			reply.NReduce = c.NReduce
+
+			// set the status to processing
+			c.tasks[i].WorkerID = args.WorkerID
+			c.tasks[i].State = TaskStateProcessing
+
 			return nil
 		}
 	}
 
 	return errors.New("no idle tasks")
+}
+
+func (c *Coordinator) UpdateTaskProgress(args *UpdateTaskProgressArgs, reply *UpdateTaskProgressReply) error {
+	c.Lock()
+	defer c.Unlock()
+
+	if c.tasks[args.TaskID].WorkerID != args.WorkerID {
+		return errors.New("invalid worker ID")
+	}
+
+	c.tasks[args.TaskID].State = args.TaskState
+	c.tasks[args.TaskID].LastUpdateTime = args.Timestamp
+
+	return nil
 }
 
 // an example RPC handler.
@@ -81,6 +113,7 @@ func (c *Coordinator) Done() bool {
 		}
 	}
 
+	fmt.Println("shutting down coordinator")
 	return true
 }
 
@@ -88,7 +121,7 @@ func createMapTasks(files []string) []Task {
 	tasks := make([]Task, 0, len(files))
 	for i, file := range files {
 		tasks = append(tasks, Task{
-			ID:       i + 1,
+			ID:       i,
 			Type:     TaskTypeMap,
 			State:    TaskStateIdle,
 			Location: file,
