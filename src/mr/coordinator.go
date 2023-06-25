@@ -162,10 +162,21 @@ func (c *Coordinator) startCheckProgress() {
 				lastUpdateTime := c.MapTasks[i].LastUpdateTime
 				state := c.MapTasks[i].State
 
-				if state == TaskStateProcessing && t.Sub(time.UnixMilli(lastUpdateTime)) > TaskProcessingTimeout {
+				if state == TaskStateProcessing && t.Sub(time.UnixMilli(lastUpdateTime)) >= TaskProcessingTimeout {
 					// reset it
 					c.MapTasks[i].State = TaskStateIdle
 					c.MapTasks[i].LastUpdateTime = 0
+				}
+			}
+
+			for i := 0; i < len(c.ReduceTasks); i++ {
+				lastUpdateTime := c.ReduceTasks[i].LastUpdateTime
+				state := c.ReduceTasks[i].State
+
+				if state == TaskStateProcessing && t.Sub(time.UnixMilli(lastUpdateTime)) >= TaskProcessingTimeout {
+					// reset it
+					c.ReduceTasks[i].State = TaskStateIdle
+					c.ReduceTasks[i].LastUpdateTime = 0
 				}
 			}
 

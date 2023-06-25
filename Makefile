@@ -50,5 +50,5 @@ run-wc-worker: build
 run-test:
 	@cd src/main && bash test-mr.sh
 
-run-test-many:
-	@cd src/main && bash test-mr-many.sh
+run-test-many-10:
+	@cd src/main && bash test-mr-many.sh 10
