@@ -40,11 +40,15 @@ build:
 run-wc-sequential:
 	@cd src/main && go run mrsequential.go wc.so pg*.txt
 
-run-wc-coordinator:
+run-wc-coordinator: build
 	@cd src/main && go run mrcoordinator.go pg-*.txt
 
-run-wc-worker:
+run-wc-worker: build
+	@cd src/main rm -rf mr-*
 	@cd src/main && go run mrworker.go wc.so
 
 run-test:
 	@cd src/main && bash test-mr.sh
+
+run-test-many:
+	@cd src/main && bash test-mr-many.sh

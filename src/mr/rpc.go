@@ -40,9 +40,14 @@ type GetTaskReply struct {
 // UpdateTaskProgressArgs update the task progress from the workerID
 type UpdateTaskProgressArgs struct {
 	WorkerID  string
+	TaskType  TaskType
 	TaskID    int
 	TaskState TaskState
 	Timestamp int64
+
+	// only sent when by map worker when it is finished
+	// reduceID:location
+	ReduceLocations []string
 }
 
 type UpdateTaskProgressReply struct{}

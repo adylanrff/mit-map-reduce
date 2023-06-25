@@ -37,6 +37,11 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+type WorkerResult struct {
+	err             error
+	resultLocations []string
+}
+
 // main/mrworker.go calls this function.
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	var (
@@ -44,11 +49,11 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 		nReduce          int
 		isProcessingTask bool
 
-		errChan  = make(chan error)
-		workerID = uuid.NewString()
+		workerResultChan = make(chan WorkerResult)
+		workerID         = uuid.NewString()
 	)
 
-	defer close(errChan)
+	defer close(workerResultChan)
 
 	for {
 		if !isProcessingTask {
@@ -66,9 +71,9 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			go func() {
 				switch currentTask.Type {
 				case TaskTypeMap:
-					errChan <- doMap(mapf, currentTask.ID, currentTask.Location, nReduce)
+					workerResultChan <- doMap(mapf, currentTask.ID, currentTask.Locations, nReduce)
 				case TaskTypeReduce:
-					errChan <- doReduce(reducef, currentTask.ReduceTaskID, currentTask.Location)
+					workerResultChan <- doReduce(reducef, currentTask.ID, currentTask.Locations)
 				case TaskTypeShutdown:
 					fmt.Println("shutting down")
 					return
@@ -78,18 +83,20 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			// Report that the task has been finished
 			for {
 				select {
-				case err := <-errChan:
+				case workerResult := <-workerResultChan:
+					err := workerResult.err
 					if err != nil {
 						// Set task to idle again
-						_ = callUpdateTaskProgress(workerID, currentTask.ID, TaskStateIdle)
+						fmt.Printf("task error. taskType %d, err %+v\n", currentTask.Type, err)
+						_ = callUpdateTaskProgress(workerID, currentTask, TaskStateIdle, nil)
 					} else {
 						//  set task to successful
-						_ = callUpdateTaskProgress(workerID, currentTask.ID, TaskStateFinished)
+						_ = callUpdateTaskProgress(workerID, currentTask, TaskStateFinished, workerResult.resultLocations)
 					}
 					isProcessingTask = false
 				case <-time.After(time.Second):
 					// Report that the task is still processing
-					_ = callUpdateTaskProgress(workerID, currentTask.ID, TaskStateProcessing)
+					_ = callUpdateTaskProgress(workerID, currentTask, TaskStateProcessing, nil)
 				}
 
 				if !isProcessingTask {
@@ -121,57 +128,74 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	return false
 }
 
-func doMap(mapf func(string, string) []KeyValue, taskID int, location string, nReduce int) error {
-	buckets := make(map[int][]KeyValue, nReduce)
-	content := readFile(location)
-	kva := mapf(location, string(content))
-	for _, kv := range kva {
-		bucket := ihash(kv.Key) % nReduce
-		if _, ok := buckets[bucket]; !ok {
-			buckets[bucket] = make([]KeyValue, 0)
+func doMap(mapf func(string, string) []KeyValue, mapTaskID int, locations []string, nReduce int) WorkerResult {
+	var workerResult WorkerResult
+	reduceTasks := make(map[int][]KeyValue, nReduce)
+	resultLocations := make([]string, nReduce)
+
+	for _, location := range locations {
+		content := readFile(location)
+		kva := mapf(location, string(content))
+		for _, kv := range kva {
+			reduceTaskID := ihash(kv.Key) % nReduce
+			if _, ok := reduceTasks[reduceTaskID]; !ok {
+				reduceTasks[reduceTaskID] = make([]KeyValue, 0)
+			}
+			reduceTasks[reduceTaskID] = append(reduceTasks[reduceTaskID], kv)
 		}
-		buckets[bucket] = append(buckets[bucket], kv)
 	}
 
-	for bucket, kvs := range buckets {
-		file, err := ioutil.TempFile("", "mr-temp-*")
-		if err != nil {
-			return err
-		}
+	for reduceTaskID, kvs := range reduceTasks {
+		if len(kvs) > 0 {
+			file, err := ioutil.TempFile("", "mr-temp-*")
+			if err != nil {
+				workerResult.err = err
+				return workerResult
+			}
 
-		enc := json.NewEncoder(file)
-		for _, kv := range kvs {
-			enc.Encode(&kv)
-		}
+			enc := json.NewEncoder(file)
+			for _, kv := range kvs {
+				enc.Encode(&kv)
+			}
 
-		filename := fmt.Sprintf("mr-%d-%d", taskID, bucket+1)
-		os.Rename(file.Name(), filename)
+			filename := fmt.Sprintf("mr-%d-%d", mapTaskID, reduceTaskID)
+			os.Rename(file.Name(), filename)
+			resultLocations[reduceTaskID] = filename
+		}
 	}
 
-	return nil
+	workerResult.resultLocations = resultLocations
+	return workerResult
 }
 
-func doReduce(reducef func(string, []string) string, reduceTask int, location string) error {
+func doReduce(reducef func(string, []string) string, reduceTask int, locations []string) WorkerResult {
+	var workerResult WorkerResult
 	kva := make([]KeyValue, 0)
-	file, err := os.Open(location)
-	if err != nil {
-		log.Fatalf("cannot open %v", location)
-	}
-	dec := json.NewDecoder(file)
-	for {
-		var kv KeyValue
-		if err := dec.Decode(&kv); err != nil {
-			break
+
+	for _, location := range locations {
+		file, err := os.Open(location)
+		if err != nil {
+			fmt.Printf("cannot open file: %s\n", location)
+			workerResult.err = err
+			return workerResult
 		}
-		kva = append(kva, kv)
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kva = append(kva, kv)
+		}
+		file.Close()
 	}
-	file.Close()
 
 	sort.Sort(ByKey(kva))
 
 	ofile, err := ioutil.TempFile("", "mr-temp-*")
 	if err != nil {
-		return err
+		workerResult.err = err
+		return workerResult
 	}
 
 	i := 0
@@ -192,16 +216,18 @@ func doReduce(reducef func(string, []string) string, reduceTask int, location st
 		i = j
 	}
 
-	os.Rename(file.Name(), fmt.Sprintf("mr-out-%d", reduceTask))
-	return nil
+	os.Rename(ofile.Name(), fmt.Sprintf("mr-out-%d", reduceTask))
+	return workerResult
 }
 
-func callUpdateTaskProgress(workerID string, taskID int, taskState TaskState) error {
+func callUpdateTaskProgress(workerID string, currentTask Task, taskState TaskState, resultLocations []string) error {
 	args := &UpdateTaskProgressArgs{
-		WorkerID:  workerID,
-		TaskID:    taskID,
-		TaskState: taskState,
-		Timestamp: time.Now().Unix(),
+		WorkerID:        workerID,
+		TaskType:        currentTask.Type,
+		TaskID:          currentTask.ID,
+		TaskState:       taskState,
+		Timestamp:       time.Now().UnixMilli(),
+		ReduceLocations: resultLocations,
 	}
 
 	reply := &UpdateTaskProgressReply{}

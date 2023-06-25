@@ -107,7 +107,8 @@ then
 else
   echo '---' wc output is not the same as mr-correct-wc.txt
   echo '---' wc test: FAIL
-  failed_any=1
+  failed_any=1 && exit
+  exit
 fi
 
 # wait for remaining workers and coordinator to exit.
@@ -138,7 +139,8 @@ then
 else
   echo '---' indexer output is not the same as mr-correct-indexer.txt
   echo '---' indexer test: FAIL
-  failed_any=1
+  failed_any=1 && exit
+  exit
 fi
 
 wait
@@ -159,7 +161,7 @@ if [ "$NT" != "2" ]
 then
   echo '---' saw "$NT" workers rather than 2
   echo '---' map parallelism test: FAIL
-  failed_any=1
+  failed_any=1 && exit
 fi
 
 if cat mr-out* | grep '^parallel.* 2' > /dev/null
@@ -168,7 +170,7 @@ then
 else
   echo '---' map workers did not run in parallel
   echo '---' map parallelism test: FAIL
-  failed_any=1
+  failed_any=1 && exit
 fi
 
 wait
@@ -190,7 +192,7 @@ if [ "$NT" -lt "2" ]
 then
   echo '---' too few parallel reduces.
   echo '---' reduce parallelism test: FAIL
-  failed_any=1
+  failed_any=1 && exit
 else
   echo '---' reduce parallelism test: PASS
 fi
@@ -217,7 +219,7 @@ then
 else
   echo '---' map jobs ran incorrect number of times "($NT != 8)"
   echo '---' job count test: FAIL
-  failed_any=1
+  failed_any=1 && exit
 fi
 
 wait
@@ -276,7 +278,7 @@ then
 else
   echo '---' output changed after first worker exited
   echo '---' early exit test: FAIL
-  failed_any=1
+  failed_any=1 && exit
 fi
 rm -f mr-*
 
@@ -326,7 +328,7 @@ then
 else
   echo '---' crash output is not the same as mr-correct-crash.txt
   echo '---' crash test: FAIL
-  failed_any=1
+  failed_any=1 && exit
 fi
 
 #########################################################
